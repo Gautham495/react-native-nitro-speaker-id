@@ -1,0 +1,23 @@
+{
+  "cxxNamespace": ["nitrospeakerid"],
+  "ios": {
+    "iosModuleName": "NitroSpeakerId"
+  },
+  "android": {
+    "androidNamespace": ["nitrospeakerid"],
+    "androidCxxLibName": "nitrospeakerid"
+  },
+  "autolinking": {
+    "NitroSpeakerId": {
+      "ios": {
+        "language": "swift",
+        "implementationClassName": "NitroSpeakerId"
+      },
+      "android": {
+        "language": "kotlin",
+        "implementationClassName": "NitroSpeakerId"
+      }
+    }
+  },
+  "ignorePaths": ["node_modules"]
+}
