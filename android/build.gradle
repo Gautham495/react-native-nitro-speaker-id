@@ -2,7 +2,8 @@ buildscript {
   ext.NitroSpeakerId = [
     kotlinVersion: "2.0.21",
     minSdkVersion: 24,
-    compileSdkVersion: 36
+    compileSdkVersion: 36,
+    targetSdkVersion: 36
   ]
 
   ext.getExtOrDefault = { prop ->
@@ -32,7 +33,7 @@ def reactNativeArchitectures() {
 
 apply plugin: "com.android.library"
 apply plugin: "kotlin-android"
-apply from: '../nitrogen/generated/android/nitrospeakerid+autolinking.gradle'
+apply from: '../nitrogen/generated/android/NitroSpeakerId+autolinking.gradle'
 
 apply plugin: "com.facebook.react"
 
@@ -43,6 +44,7 @@ android {
 
   defaultConfig {
     minSdkVersion getExtOrDefault("minSdkVersion")
+    targetSdkVersion getExtOrDefault("targetSdkVersion")
 
     externalNativeBuild {
       cmake {
@@ -104,9 +106,27 @@ android {
     sourceCompatibility JavaVersion.VERSION_17
     targetCompatibility JavaVersion.VERSION_17
   }
+
+  // TFLite .tflite files ship as raw model data. Don't compress them in the
+  // AAR — TFLite mmaps them at load time and compressed models can't be
+  // mmapped. Consuming app is free to compress at APK level if needed.
+  aaptOptions {
+    noCompress += ["tflite"]
+  }
 }
 
 dependencies {
   implementation "com.facebook.react:react-android"
   implementation project(":react-native-nitro-modules")
+
+  // TensorFlow Lite runtime + NNAPI delegate + GPU delegate.
+  // Version 2.16.1 is 16 KB page-aligned per Google's own release notes
+  // (they enforced this in 2.14+; 2.16.1 is stable and current). Total AAR
+  // footprint ~4 MB per ABI vs ONNX Runtime's ~14 MB. Faster, smaller,
+  // Google-maintained, no page-size fights.
+  implementation "org.tensorflow:tensorflow-lite:2.16.1"
+  implementation "org.tensorflow:tensorflow-lite-gpu:2.16.1"
+  implementation "org.tensorflow:tensorflow-lite-gpu-delegate-plugin:0.4.4"
+  // NNAPI delegate is bundled in the main tensorflow-lite artifact — no
+  // separate dependency needed for it.
 }

@@ -1,23 +1,24 @@
 {
+  "$schema": "https://nitro.margelo.com/nitro.schema.json",
   "cxxNamespace": ["nitrospeakerid"],
   "ios": {
     "iosModuleName": "NitroSpeakerId"
   },
   "android": {
     "androidNamespace": ["nitrospeakerid"],
-    "androidCxxLibName": "nitrospeakerid"
+    "androidCxxLibName": "NitroSpeakerId"
   },
   "autolinking": {
-    "NitroSpeakerId": {
+    "SpeakerId": {
       "ios": {
         "language": "swift",
-        "implementationClassName": "NitroSpeakerId"
+        "implementationClassName": "HybridSpeakerId"
       },
       "android": {
         "language": "kotlin",
-        "implementationClassName": "NitroSpeakerId"
+        "implementationClassName": "HybridSpeakerId"
       }
     }
   },
-  "ignorePaths": ["node_modules"]
+  "ignorePaths": ["node_modules", "example", "docs"]
 }
