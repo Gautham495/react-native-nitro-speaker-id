@@ -207,18 +207,31 @@ final class MelSpectrogram {
         )
     }
 
-    /**
+/**
      * pcm: mono 16 kHz Float32 in [-1, 1].
      * Returns flat Float array of length [timeFrames * nMels], row-major
      * (time-major, mel-minor). Matches SpeechBrain's [batch, time, mel] shape
      * after squeezing batch.
+     *
+     * Feature pipeline (must match speechbrain/spkrec-ecapa-voxceleb exactly):
+     *   1. Hann-windowed STFT (n_fft=400, hop=160)
+     *   2. Power spectrum (|X|^2)
+     *   3. Triangular mel filterbank (80 bins, HTK)
+     *   4. Log-mel in dB: 10*log10(max(mel, 1e-10))
+     *   5. Top-db clip: floor at (max - 80 dB)
+     *   6. Sentence mean-var norm: subtract per-mel-bin mean over time
+     *
+     * Steps 4-6 match SpeechBrain's Filterbank(log_mel=True, amin=1e-10,
+     * ref_value=1.0, top_db=80.0) followed by InputNormalization(
+     * norm_type='sentence', std_norm=False). ECAPA-TDNN was trained
+     * expecting this exact input; skip step 6 and cosine collapses to ~0.
      */
     func compute(pcm: [Float]) -> [Float] {
         let paddedN = nFft.nextPowerOfTwo
         let halfN = paddedN / 2
 
         // Number of time frames = 1 + floor((len - nFft) / hop)
-        // Match SpeechBrain's behavior: center=False, no padding at ends.
+        // Matches SpeechBrain's STFT default (center=False, no end padding).
         guard pcm.count >= nFft else {
             return [] // audio too short
         }
@@ -260,7 +273,7 @@ final class MelSpectrogram {
                     // In-place FFT.
                     fftSetup.forward(input: split, output: &split)
 
-                    // 3. Power spectrum (|X|²).
+                    // 3. Power spectrum (|X|^2).
                     // vDSP gives us halfN bins; the Nyquist bin sits in imagp[0].
                     // Handle DC (bin 0) and Nyquist (bin halfN) separately.
                     power[0] = rPtr[0] * rPtr[0]                    // DC bin
@@ -268,24 +281,54 @@ final class MelSpectrogram {
                     for i in 1..<halfN {
                         power[i] = rPtr[i] * rPtr[i] + iPtr[i] * iPtr[i]
                     }
-
-                    // vDSP FFT output is scaled by 2, so divide by 4 to match
-                    // numpy/torch conventions. Fbank uses the raw magnitude
-                    // squared so an overall scaling gets absorbed by the log,
-                    // but we normalize for the mel bank next.
                 }
             }
 
             // 4. Apply mel filterbank: mel[m] = sum(power[k] * filter[m][k]).
+            //    Then log-mel in dB scale, matching SpeechBrain's Filterbank
+            //    with log_mel=True, amin=1e-10, ref_value=1.0.
+            //    Formula:  10 * log10(max(mel, 1e-10))
+            //    Values come out in roughly [-100, +something] before the
+            //    top-db clip and mean-var norm below.
             for m in 0..<nMels {
                 var acc: Float = 0
                 let filter = melFilterbank[m]
                 for k in 0..<(halfN + 1) {
                     acc += power[k] * filter[k]
                 }
-                // 5. log(1 + 10*mel) — SpeechBrain's log1p variant.
-                //    Matches self.log_input default and log_transform=False.
-                result[frameIdx * nMels + m] = log(1 + 10 * acc)
+                let clamped = max(acc, 1e-10)
+                result[frameIdx * nMels + m] = 10 * log10(clamped)
+            }
+        }
+
+        // 5. Top-db clip. SpeechBrain floors values at (max - top_db). Keeps
+        //    the log-mel dynamic range bounded so very quiet frames don't
+        //    dominate the sentence mean. top_db=80 is the SpeechBrain default.
+        var maxVal: Float = -.infinity
+        for v in result { if v > maxVal { maxVal = v } }
+        let floor = maxVal - 80.0
+        for i in 0..<result.count {
+            if result[i] < floor { result[i] = floor }
+        }
+
+        // 6. Sentence-level mean normalization. SpeechBrain's
+        //    InputNormalization(norm_type='sentence', std_norm=False):
+        //    subtract per-mel-bin mean across all time frames.
+        //    std_norm=False means we do NOT divide by std.
+        //    Without this, cosine similarity between on-device and
+        //    cloud-enrolled embeddings collapses to ~0 — the ECAPA body
+        //    was trained expecting mean-subtracted log-mel input.
+        var means = [Float](repeating: 0, count: nMels)
+        for t in 0..<timeFrames {
+            for m in 0..<nMels {
+                means[m] += result[t * nMels + m]
+            }
+        }
+        let invT = 1.0 / Float(timeFrames)
+        for m in 0..<nMels { means[m] *= invT }
+        for t in 0..<timeFrames {
+            for m in 0..<nMels {
+                result[t * nMels + m] -= means[m]
             }
         }
 

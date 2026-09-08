@@ -228,10 +228,23 @@ private class MelSpectrogram(
         fft = FloatFFT_1D(paddedN.toLong())
     }
 
-    /**
+/**
      * pcm: mono 16 kHz Float32 in [-1, 1].
      * Returns flat FloatArray of length [timeFrames * nMels], row-major
      * (time-major, mel-minor). Matches SpeechBrain's [batch, time, mel] shape.
+     *
+     * Feature pipeline (must match speechbrain/spkrec-ecapa-voxceleb exactly):
+     *   1. Hann-windowed STFT (n_fft=400, hop=160)
+     *   2. Power spectrum via JTransforms real FFT
+     *   3. Triangular mel filterbank (80 bins, HTK)
+     *   4. Log-mel in dB: 10*log10(max(mel, 1e-10))
+     *   5. Top-db clip: floor at (max - 80 dB)
+     *   6. Sentence mean-var norm: subtract per-mel-bin mean over time
+     *
+     * Steps 4-6 match SpeechBrain's Filterbank(log_mel=True, amin=1e-10,
+     * ref_value=1.0, top_db=80.0) followed by InputNormalization(
+     * norm_type='sentence', std_norm=False). ECAPA-TDNN was trained
+     * expecting this exact input; skip step 6 and cosine collapses to ~0.
      */
     fun compute(pcm: FloatArray): FloatArray {
         if (pcm.size < nFft) return FloatArray(0)
@@ -260,10 +273,9 @@ private class MelSpectrogram(
             //      a[1]    = Re[N/2]   (Nyquist, real — packed here for space)
             //      a[2k]   = Re[k]     for k = 1..N/2-1
             //      a[2k+1] = Im[k]     for k = 1..N/2-1
-            //    So we unpack into a standard power[0..N/2] array.
             fft.realForward(fftBuffer)
 
-            // 3. Power spectrum |X|².
+            // 3. Power spectrum |X|^2.
             power[0] = fftBuffer[0] * fftBuffer[0]                // DC
             power[halfN] = fftBuffer[1] * fftBuffer[1]            // Nyquist
             for (k in 1 until halfN) {
@@ -272,14 +284,49 @@ private class MelSpectrogram(
                 power[k] = re * re + im * im
             }
 
-            // 4. Apply mel filterbank + log(1 + 10*mel) — matches iOS.
+            // 4. Mel filterbank + log-mel in dB, matching SpeechBrain's
+            //    Filterbank(log_mel=True, amin=1e-10, ref_value=1.0):
+            //    result = 10 * log10(max(mel_energy, 1e-10))
             for (m in 0 until nMels) {
                 var acc = 0f
                 val filter = melFilterbank[m]
                 for (k in 0..halfN) {
                     acc += power[k] * filter[k]
                 }
-                result[frameIdx * nMels + m] = ln(1f + 10f * acc)
+                val clamped = maxOf(acc, 1e-10f)
+                result[frameIdx * nMels + m] = 10f * log10(clamped)
+            }
+        }
+
+        // 5. Top-db clip. SpeechBrain floors values at (max - top_db).
+        //    top_db=80 is the SpeechBrain default. Keeps the log-mel
+        //    dynamic range bounded so very quiet frames don't dominate
+        //    the sentence mean.
+        var maxVal = Float.NEGATIVE_INFINITY
+        for (v in result) if (v > maxVal) maxVal = v
+        val floor = maxVal - 80f
+        for (i in result.indices) {
+            if (result[i] < floor) result[i] = floor
+        }
+
+        // 6. Sentence-level mean normalization. SpeechBrain's
+        //    InputNormalization(norm_type='sentence', std_norm=False):
+        //    subtract per-mel-bin mean across all time frames.
+        //    std_norm=False means we do NOT divide by std.
+        //    Without this, cosine similarity between on-device and
+        //    cloud-enrolled embeddings collapses to ~0 — the ECAPA body
+        //    was trained expecting mean-subtracted log-mel input.
+        val means = FloatArray(nMels)
+        for (t in 0 until timeFrames) {
+            for (m in 0 until nMels) {
+                means[m] += result[t * nMels + m]
+            }
+        }
+        val invT = 1f / timeFrames
+        for (m in 0 until nMels) means[m] *= invT
+        for (t in 0 until timeFrames) {
+            for (m in 0 until nMels) {
+                result[t * nMels + m] -= means[m]
             }
         }
 
