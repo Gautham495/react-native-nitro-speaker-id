@@ -97,7 +97,7 @@ allprojects {
 
 > [!NOTE]
 >
-> The ECAPA-TDNN model file (~14 MB for iOS Core ML, ~40 MB for Android TFLite) is not bundled with the library. Convert it once from SpeechBrain's checkpoint using the Colab notebook in [CONVERSION.md](./CONVERSION.md), then bundle it in your app or host it on your own CDN.
+> The ECAPA-TDNN model file (~14 MB for iOS Core ML, ~40 MB for Android TFLite) is not bundled with the library. Convert it once from SpeechBrain's checkpoint using the Colab notebook in [ECAPA-CONVERSION.md](./ECAPA-CONVERSION.md), then bundle it in your app or host it on your own CDN.
 >
 > Pre-converted models are available on my personal Cloudflare R2 bucket for testing:
 >
