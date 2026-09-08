@@ -46,7 +46,7 @@ const MODEL_FILENAME =
 // Public CDN hosting the pre-converted models.
 // ⚠️  This is my (Gautham's) personal Cloudflare R2 bucket — I might delete
 //     or reshuffle it whenever. Fine for kicking the tires; don't build
-//     production against it. Convert your own model (see CONVERSION.md) and
+//     production against it. Convert your own model (see ECAPA-CONVERSION.md) and
 //     host on your own storage before shipping.
 const CDN_BASE = 'https://ml-models-bucket.gauthamvijay.com';
 const CDN_URL =
@@ -490,7 +490,8 @@ export default function App() {
             <Text style={s.warnText}>
               The CDN URL points at Gautham's personal R2 bucket. It might
               disappear or change. For anything you're actually shipping,
-              convert your own model (see CONVERSION.md) and host it yourself.
+              convert your own model (see ECAPA-CONVERSION.md) and host it
+              yourself.
             </Text>
           </View>
 

@@ -236,7 +236,7 @@ Because Core ML's `.mlpackage` is a directory (not a single file), it can't be s
 
 ### Option 2: Convert yourself (recommended for production)
 
-Takes ~5 minutes in a free Google Colab session. Matches your Python cloud model exactly. See [CONVERSION.md](./CONVERSION.md) for the notebook and step-by-step guide.
+Takes ~5 minutes in a free Google Colab session. Matches your Python cloud model exactly. See [ECAPA-CONVERSION.md](./ECAPA-CONVERSION.md) for the notebook and step-by-step guide.
 
 ---
 
