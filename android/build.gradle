@@ -4,7 +4,6 @@ buildscript {
     repositories {
       google()
       mavenCentral()
-      maven { url 'https://jitpack.io' }
     }
     dependencies {
       classpath "com.android.tools.build:gradle:8.7.2"
@@ -96,13 +95,6 @@ android {
     targetCompatibility JavaVersion.VERSION_1_8
   }
  
-  // TFLite .tflite files ship as raw model data. Don't compress them in the
-  // AAR — TFLite mmaps them at load time and compressed models can't be
-  // mmapped. Consuming app is free to compress at APK level if needed.
-  aaptOptions {
-    noCompress += ["tflite"]
-  }
-
   kotlinOptions {
     jvmTarget = "17"
   }
@@ -111,7 +103,6 @@ android {
 repositories {
   mavenCentral()
   google()
-  maven { url 'https://jitpack.io' }
 }
 
 dependencies {
@@ -121,7 +112,5 @@ dependencies {
 
   implementation project(":react-native-nitro-modules")
 
-  implementation "com.google.ai.edge.litert:litert:2.1.0"
-
-  implementation 'com.github.wendykierp:JTransforms:3.1'
+  implementation "org.pytorch:executorch-android:0.6.0"
 }

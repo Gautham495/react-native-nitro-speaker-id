@@ -6,34 +6,34 @@
 
 # react-native-nitro-speaker-id
 
-**React Native Nitro Module** for **on-device speaker identification** — ECAPA-TDNN embeddings running natively on the **Apple Neural Engine** and **Android CPU/NPU**. World's first for React Native.
+**React Native Nitro Module** for **on-device speaker identification** — ECAPA-TDNN embeddings running natively via ExecuTorch on **Apple Neural Engine** (iOS) and **Android CPU**.
 
 ---
 
 > [!NOTE]
 >
-> - This library was built for my production app, an AI meeting intelligence platform, where we needed to label who was speaking during live sales calls — without shipping audio to the cloud, without per-turn latency, and without vendor lock-in.
-> - It runs [SpeechBrain's ECAPA-TDNN](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb) speaker embedding model on-device via each platform's **native ML runtime**:
->   - **iOS** — Core ML → Neural Engine (A12+)
->   - **Android** — LiteRT (Google AI Edge) → CPU
+> - This library was built for my production app SHINE, an AI meeting intelligence platform, where we needed to label who was speaking during live sales calls — without shipping audio to the cloud, without per-turn latency, and without vendor lock-in.
+> - It runs [SpeechBrain's ECAPA-TDNN](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb) speaker embedding model on-device via [**ExecuTorch**](https://pytorch.org/executorch), PyTorch's official on-device runtime:
+>   - **iOS** — ExecuTorch → Core ML (fp16) → Neural Engine / GPU / CPU
+>   - **Android** — ExecuTorch → XNNPACK → CPU
 >
 > **What you get out of the box:**
 >
 > - True on-device inference — zero cloud calls, zero bandwidth, zero privacy leaks
 > - 192-dimensional L2-normalized embeddings, cosine-comparable
-> - Native mel-spectrogram feature extraction (Apple Accelerate on iOS, JTransforms FFT on Android)
-> - Enroll voice samples, match new recordings against enrolled voiceprints
-> - Latency: 8-40 ms per 1.5s window on flagship devices, 50-140 ms on mid-range Android
-> - 16 KB page-aligned (Google Play compliant, unlike `tensorflow-lite` and `onnxruntime`)
+> - **Feature extraction is inside the model graph** — no hand-rolled DSP, no mel-spec drift between cloud and device
+> - **Cosine parity with cloud SpeechBrain: 0.998+** (verified by the model exporter)
+> - Enroll voice samples once, match new recordings against enrolled voiceprints
+> - Latency: 2-30 ms per 3s window on flagship devices, 40-140 ms on mid-range Android
 >
 > **What this library does NOT do** (by design):
 >
 > - Handle recording — pair with [react-native-nitro-audio-anvil](https://github.com/Gautham495/react-native-nitro-audio-anvil) for corruption-proof audio capture
-> - Provide the ECAPA model file — you convert it once via the included Colab notebook and bundle/host it yourself
+> - Provide the ECAPA model file — download the pre-converted `.pte` files from [HuggingFace](https://huggingface.co/mlboydaisuke/ECAPA-TDNN-Speaker-ExecuTorch) and bundle/host them yourself
 > - Voice activity detection — feed it audio windows where someone is actually speaking
 > - Cloud speaker verification — this is 100% local; if you need a cloud fallback, that's your backend
 >
-> If you need on-device speaker identification for React Native — meeting transcription, voice-locked features, speaker diarization — this library gives you production-grade inference at native speed.
+> If you need on-device speaker identification for React Native — meeting transcription, voice-locked features, speaker diarization — this library gives you production-grade inference at native speed, backed by the same weights your cloud pipeline uses.
 
 ---
 
@@ -43,34 +43,45 @@
 npm install react-native-nitro-speaker-id react-native-nitro-modules
 ```
 
-**iOS only:**
+### iOS
+
+Add **ExecuTorch** as a Swift Package Dependency in Xcode:
+
+1. `File → Add Package Dependencies`
+2. Paste `https://github.com/pytorch/executorch`
+3. Set branch to `swiftpm-1.3.0` (or the latest tagged `swiftpm-X.Y.Z` release)
+4. Link these products to your app target:
+   - `executorch` (core runtime)
+   - `backend_coreml` (Core ML backend)
+   - `backend_xnnpack` (CPU fallback)
+   - `kernels_portable` (required kernel set)
+
+Then:
 
 ```bash
 cd ios && bundle exec pod install
 ```
 
-**Android** — add JTransforms (used for the mel-spectrogram FFT) to your `android/build.gradle` `allprojects`:
+### Android
+
+Add ExecuTorch to your app's `android/build.gradle`:
 
 ```gradle
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
-        maven { url 'https://jitpack.io' }
-    }
+dependencies {
+    implementation "org.pytorch:executorch-android:0.6.0"
 }
 ```
+
+That's it. No separate FFT library, no LiteRT, no JitPack. ExecuTorch bundles XNNPACK internally.
 
 > [!IMPORTANT]
 >
 > - **iOS**: Fully tested and production-ready ✅
->   - Core ML runtime, Neural Engine acceleration on A12+
->   - Native `vDSP` mel-spectrogram via Apple's Accelerate framework
->   - Zero third-party ML dependencies
+>   - ExecuTorch runtime, Core ML backend, Neural Engine acceleration on A12+
+>   - Zero hand-rolled DSP — mel-spec pipeline is inside the model graph
 > - **Android**: Fully tested and production-ready ✅
->   - LiteRT runtime (Google's replacement for the deprecated `tensorflow-lite`)
->   - JTransforms FFT for the mel-spectrogram front-end
->   - CPU-only for reliability across device makers
+>   - ExecuTorch runtime with XNNPACK backend for CPU inference
+>   - Zero hand-rolled DSP — same graph as iOS
 >   - 16 KB page-aligned — Google Play submission-ready
 > - Tested on React Native 0.85.3 and above. PRs welcome for lower versions.
 
@@ -97,53 +108,55 @@ allprojects {
 
 > [!NOTE]
 >
-> The ECAPA-TDNN model file (~14 MB for iOS Core ML, ~40 MB for Android TFLite) is not bundled with the library. Convert it once from SpeechBrain's checkpoint using the Colab notebook in [ECAPA-CONVERSION.md](./ECAPA-CONVERSION.md), then bundle it in your app or host it on your own CDN.
+> The ECAPA-TDNN model files are not bundled with the library. Both are available pre-converted on HuggingFace:
 >
-> Pre-converted models are available on my personal Cloudflare R2 bucket for testing:
+> - iOS: [`speaker_ecapa_coreml_all.pte`](https://huggingface.co/mlboydaisuke/ECAPA-TDNN-Speaker-ExecuTorch/blob/main/speaker_ecapa_coreml_all.pte) (~42 MB, Core ML fp16)
+> - Android: [`speaker_ecapa_xnnpack_fp32.pte`](https://huggingface.co/mlboydaisuke/ECAPA-TDNN-Speaker-ExecuTorch/blob/main/speaker_ecapa_xnnpack_fp32.pte) (~84 MB, XNNPACK fp32)
 >
-> - iOS: `https://ml-models-bucket.gauthamvijay.com/ecapa-body-192.mlpackage.zip`
-> - Android: `https://ml-models-bucket.gauthamvijay.com/ecapa-body-192.tflite`
+> Pre-hosted for testing on my personal Cloudflare R2 bucket:
 >
-> ⚠️ **This is my personal bucket for demo purposes only.** I may delete or reshuffle it whenever. For anything you're actually shipping, convert your own model and host it yourself.
+> - iOS: `https://ml-models-bucket.gauthamvijay.com/ecapa-speaker-ios.pte`
+> - Android: `https://ml-models-bucket.gauthamvijay.com/ecapa-speaker-android.pte`
+>
+> ⚠️ **My personal bucket for demo purposes only.** For anything you're actually shipping, download the files from HuggingFace and host them yourself, or bundle them in your app.
 
 ---
 
 ## 🧠 Overview
 
-| Feature                      | Implementation                            |
-| ---------------------------- | ----------------------------------------- |
-| On-device speaker embeddings | ECAPA-TDNN (SpeechBrain)                  |
-| iOS ML runtime               | Core ML → Neural Engine / GPU / CPU       |
-| Android ML runtime           | LiteRT (Google AI Edge) → CPU             |
-| Mel-spectrogram (iOS)        | Apple Accelerate (`vDSP`)                 |
-| Mel-spectrogram (Android)    | JTransforms FFT                           |
-| Model format (iOS)           | Core ML `.mlpackage` (FP16 quantized)     |
-| Model format (Android)       | TFLite `.tflite` (FP32 or FP16)           |
-| Input                        | PCM16 mono 16 kHz                         |
-| Output                       | 192-d Float32, L2-normalized              |
-| Similarity metric            | Cosine (dot product on L2-normed vectors) |
-| 16 KB page alignment         | ✅ Both platforms                         |
-| Cloud dependency             | ❌ None (fully offline)                   |
+| Feature                            | Implementation                             |
+| ---------------------------------- | ------------------------------------------ |
+| On-device speaker embeddings       | ECAPA-TDNN (SpeechBrain)                   |
+| Runtime                            | ExecuTorch (PyTorch's official on-device)  |
+| iOS backend                        | Core ML → Neural Engine / GPU / CPU (fp16) |
+| Android backend                    | XNNPACK → CPU (fp32)                       |
+| Feature extraction                 | **Baked into the model graph**             |
+| Model format                       | `.pte` (ExecuTorch)                        |
+| Input                              | PCM16 mono 16 kHz, 3-second window         |
+| Output                             | 192-d Float32, L2-normalized               |
+| Similarity metric                  | Cosine (dot product on L2-normed vectors)  |
+| Cosine parity vs cloud SpeechBrain | **0.998+** (verified)                      |
+| 16 KB page alignment               | ✅ Both platforms                          |
+| Cloud dependency                   | ❌ None (fully offline)                    |
 
 ---
 
 ## 📈 Latency
 
-Measured on a 1.5-second audio window (native mel-spectrogram ~2-5 ms + ML runtime):
+Measured on a 3-second audio window:
 
 | Device                      | Backend           | Total   |
 | --------------------------- | ----------------- | ------- |
+| Apple Silicon Mac (M3)      | Core ML → ANE     | ~2 ms   |
 | iPhone 15 Pro (A17 Pro)     | Core ML → ANE     | ~8 ms   |
-| iPhone 12 (A14)             | Core ML → ANE     | ~18 ms  |
-| iPhone SE 3 (A15)           | Core ML → ANE     | ~14 ms  |
+| iPhone 12 (A14)             | Core ML → ANE     | ~20 ms  |
+| iPhone SE 3 (A15)           | Core ML → ANE     | ~15 ms  |
 | iPhone X (A11, no ANE)      | Core ML → GPU/CPU | ~60 ms  |
-| Galaxy S23 (SD 8 Gen 2)     | LiteRT → CPU      | ~22 ms  |
-| Pixel 8 (Tensor G3)         | LiteRT → CPU      | ~28 ms  |
-| Pixel 6a (Tensor G1)        | LiteRT → CPU      | ~45 ms  |
-| Vivo mid-range (SD 680/720) | LiteRT → CPU      | ~90 ms  |
-| Low-end 2020 Android        | LiteRT → CPU      | ~140 ms |
-
-Latency scales linearly with input duration. A 3-second window roughly doubles these numbers.
+| Galaxy S23 (SD 8 Gen 2)     | XNNPACK → CPU     | ~30 ms  |
+| Pixel 8 (Tensor G3)         | XNNPACK → CPU     | ~40 ms  |
+| Pixel 6a (Tensor G1)        | XNNPACK → CPU     | ~60 ms  |
+| Vivo mid-range (SD 680/720) | XNNPACK → CPU     | ~100 ms |
+| Low-end 2020 Android        | XNNPACK → CPU     | ~140 ms |
 
 ---
 
@@ -153,15 +166,16 @@ Latency scales linearly with input duration. A 3-second window roughly doubles t
 import { Platform } from 'react-native';
 import { SpeakerId } from 'react-native-nitro-speaker-id';
 
-// 1. Load the platform-appropriate model once at app start.
+// 1. Load the platform-appropriate .pte model once at app start.
 const modelPath = Platform.OS === 'ios'
-  ? '/path/to/ecapa-body-192.mlpackage'
-  : '/path/to/ecapa-body-192.tflite';
+  ? '/path/to/ecapa-speaker-ios.pte'
+  : '/path/to/ecapa-speaker-android.pte';
 
 await SpeakerId.loadModel(modelPath);
 
-// 2. Enroll each speaker with a clean 5-10 second sample.
-const enrollmentPcm: ArrayBuffer = await recordCleanSample();
+// 2. Enroll each speaker. The model expects 3 seconds of audio; shorter
+//    buffers get zero-padded internally.
+const enrollmentPcm: ArrayBuffer = await recordCleanSample(); // ~3s clean sample
 const gauthamsVoiceprint = await SpeakerId.embed(enrollmentPcm, 16000);
 // gauthamsVoiceprint is a Float32Array of length 192
 
@@ -171,9 +185,9 @@ const turnEmbedding = await SpeakerId.embed(turnPcm, 16000);
 
 const similarity = SpeakerId.cosine(turnEmbedding, gauthamsVoiceprint);
 console.log('cosine:', similarity);
-// > 0.55  → almost certainly Gautham
-// 0.35-0.55 → probably Gautham (phone audio)
-// < 0.35  → probably not Gautham
+// > 0.65  → almost certainly Gautham
+// 0.40-0.65 → probably Gautham (phone / noisy audio)
+// < 0.40  → probably not Gautham
 ```
 
 ---
@@ -182,10 +196,9 @@ console.log('cosine:', similarity);
 
 ### `SpeakerId.loadModel(modelPath: string): Promise<void>`
 
-Load the ECAPA model from a filesystem path. Idempotent for the same path. Loading a different path unloads the previous model first. Throws if the file doesn't exist.
+Load the `.pte` model from a filesystem path. Idempotent for the same path. Loading a different path unloads the previous model first. Throws if the file doesn't exist.
 
-- On **iOS**, pass a `.mlpackage` (compiled at runtime) or precompiled `.mlmodelc`
-- On **Android**, pass a `.tflite` file
+Force-loads the `forward` method during initialization so the first inference doesn't pay compilation cost (~200 ms one-time hit on iOS).
 
 ### `SpeakerId.isLoaded: boolean`
 
@@ -203,6 +216,8 @@ Embed a single PCM audio buffer.
 - `sampleRate` — defaults to 16000; other rates are linearly resampled
 - Returns a 192-element `Float32Array`, L2-normalized
 
+The model expects a **3-second window (48000 samples at 16 kHz)**. Shorter buffers are zero-padded at the end; longer buffers are center-cropped. This matches how the graph was exported.
+
 ### `SpeakerId.cosine(a, b): number`
 
 Cosine similarity between two L2-normalized embeddings. Range `[-1, 1]`. Both arguments can be `Float32Array` or raw `ArrayBuffer`.
@@ -213,74 +228,101 @@ Cosine similarity between two L2-normalized embeddings. Range `[-1, 1]`. Both ar
 
 Cosine scores on L2-normalized ECAPA embeddings typically land in these ranges:
 
-- **Same speaker, clean audio**: 0.55 – 0.85
-- **Same speaker, phone / noisy audio**: 0.35 – 0.55
+- **Same speaker, clean audio**: 0.65 – 0.85
+- **Same speaker, phone / noisy audio**: 0.40 – 0.65
 - **Different speakers**: -0.05 – 0.35
 
-Starting threshold: **0.40**. Log real scores from your first week of production and tune from there — the correct number depends on your microphone, your users, and your acoustic environment.
+Starting threshold: **0.45**. Log real scores from your first week of production and tune from there — the correct number depends on your microphone, your users, and your acoustic environment.
+
+The model exporter verified same-voice pairs consistently score **0.65+ higher** than different-voice pairs, so any threshold in the 0.35 – 0.55 range should cleanly separate matches from non-matches in most conditions.
 
 ---
 
 ## 🎁 Getting the Model
 
-Two files, one per platform. Both derived from SpeechBrain's ECAPA-TDNN checkpoint so client-side matching is cosine-compatible with cloud voiceprints.
+Two `.pte` files, one per platform. Both are ExecuTorch exports of SpeechBrain's ECAPA-TDNN with the mel-spec pipeline baked into the graph — meaning cross-device and cross-platform cosine parity is guaranteed by construction.
 
-### Option 1: Download from my CDN (fastest, for testing)
+### Option 1: Download from HuggingFace (recommended)
 
-- iOS: `https://ml-models-bucket.gauthamvijay.com/ecapa-body-192.mlpackage.zip` (~39 MB, unzip after download)
-- Android: `https://ml-models-bucket.gauthamvijay.com/ecapa-body-192.tflite` (~40 MB with FP16 quantization)
+The pre-converted files are hosted at [mlboydaisuke/ECAPA-TDNN-Speaker-ExecuTorch](https://huggingface.co/mlboydaisuke/ECAPA-TDNN-Speaker-ExecuTorch):
 
-Because Core ML's `.mlpackage` is a directory (not a single file), it can't be served over plain HTTP. The download is a ZIP wrapper that must be unpacked after fetch — see the example app for the full flow using `react-native-zip-archive`.
+- iOS: [`speaker_ecapa_coreml_all.pte`](https://huggingface.co/mlboydaisuke/ECAPA-TDNN-Speaker-ExecuTorch/blob/main/speaker_ecapa_coreml_all.pte) (~42 MB)
+- Android: [`speaker_ecapa_xnnpack_fp32.pte`](https://huggingface.co/mlboydaisuke/ECAPA-TDNN-Speaker-ExecuTorch/blob/main/speaker_ecapa_xnnpack_fp32.pte) (~84 MB)
 
-⚠️ **The R2 bucket is my personal hosting for demo purposes only.** For production, convert your own model (see below) and host it yourself.
+Verified against cloud PyTorch SpeechBrain:
 
-### Option 2: Convert yourself (recommended for production)
+- Core ML fp16: cosine **0.9985**
+- XNNPACK fp32: cosine **1.0000**
 
-Takes ~5 minutes in a free Google Colab session. Matches your Python cloud model exactly. See [ECAPA-CONVERSION.md](./ECAPA-CONVERSION.md) for the notebook and step-by-step guide.
+Bundle in your app or host on your own CDN.
+
+### Option 2: Download from my personal CDN (fastest, for testing)
+
+- iOS: `https://ml-models-bucket.gauthamvijay.com/ecapa-speaker-ios.pte`
+- Android: `https://ml-models-bucket.gauthamvijay.com/ecapa-speaker-android.pte`
+
+⚠️ **Personal hosting, may disappear.** For production, use Option 1 and host yourself.
+
+### Option 3: Convert yourself
+
+If you need to modify the export (e.g., different quantization, different input duration), see the conversion scripts in [executorch-models](https://github.com/john-rocky/executorch-models).
 
 ---
 
 ## 🧩 Supported Platforms
 
-| Platform             | Status                                      |
-| -------------------- | ------------------------------------------- |
-| **iOS**              | ✅ Fully Supported                          |
-| **Android**          | ✅ Fully Supported                          |
-| **iOS Simulator**    | ✅ Works                                    |
-| **Android Emulator** | ⚠️ CPU only (emulator GPU delegate crashes) |
+| Platform             | Status              |
+| -------------------- | ------------------- |
+| **iOS**              | ✅ Fully Supported  |
+| **Android**          | ✅ Fully Supported  |
+| **iOS Simulator**    | ✅ Works            |
+| **Android Emulator** | ✅ Works (CPU only) |
 
 ### iOS Requirements
 
-- **Minimum iOS**: 16.0 (for Core ML ML Program format)
-- No additional dependencies — everything ships in Apple's frameworks
+- **Minimum iOS**: 17.0 (ExecuTorch runtime requirement)
+- **ExecuTorch**: Swift Package (`swiftpm-1.3.0` or later)
+- No additional native dependencies
 
 ### Android Requirements
 
-- **Minimum SDK**: API 24 (Android 7.0)
-- **Dependencies**: `com.google.ai.edge.litert:litert:2.1.0`, `com.github.wendykierp:JTransforms:3.1`
-- **16 KB page alignment**: automatic (both LiteRT and this library ship aligned .so files)
+- **Minimum SDK**: API 23 (Android 6.0)
+- **ExecuTorch**: `org.pytorch:executorch-android:0.6.0`
+- **16 KB page alignment**: automatic (ExecuTorch ships aligned .so files)
 
 ---
 
 ## 🆚 Comparison
 
-|                         | Cloud ECAPA | ONNX Runtime | tensorflow-lite | This library            |
-| ----------------------- | ----------- | ------------ | --------------- | ----------------------- |
-| Latency per turn        | 150-400 ms  | 30-80 ms     | 30-80 ms        | 8-140 ms                |
-| Cost per meeting        | ~$0.008     | 0            | 0               | 0                       |
-| Bandwidth per meeting   | ~14 MB      | 0            | 0               | 0                       |
-| Works offline           | No          | Yes          | Yes             | Yes                     |
-| Voice data leaves phone | Yes         | No           | No              | No                      |
-| APK size overhead       | 0           | ~40 MB       | ~15 MB          | ~4 MB                   |
-| 16 KB page-aligned      | N/A         | No (2026)    | No (2026)       | Yes                     |
-| Vendor dependency       | Backend     | Microsoft    | Google (legacy) | Apple + Google (native) |
+|                         | Cloud ECAPA | ONNX Runtime    | tensorflow-lite | LiteRT          | **This library**         |
+| ----------------------- | ----------- | --------------- | --------------- | --------------- | ------------------------ |
+| Latency per turn        | 150-400 ms  | 30-80 ms        | 30-80 ms        | 20-100 ms       | **2-140 ms**             |
+| Cost per meeting        | ~$0.008     | 0               | 0               | 0               | 0                        |
+| Bandwidth per meeting   | ~14 MB      | 0               | 0               | 0               | 0                        |
+| Works offline           | No          | Yes             | Yes             | Yes             | Yes                      |
+| Voice data leaves phone | Yes         | No              | No              | No              | No                       |
+| Feature extraction      | Python DSP  | External        | External        | External        | **In the graph**         |
+| Cloud/device parity     | N/A         | ⚠️ Manual match | ⚠️ Manual match | ⚠️ Manual match | ✅ **Guaranteed 0.998+** |
+| 16 KB page-aligned      | N/A         | ❌ (2026)       | ❌ (2026)       | ✅              | ✅                       |
+| Vendor dependency       | Backend     | Microsoft       | Google (legacy) | Google          | PyTorch (ExecuTorch)     |
 
 ---
 
 ## 🤝 Pairs With
 
-- [react-native-nitro-audio-anvil](https://github.com/Gautham495/react-native-nitro-audio-anvil) — corruption-proof audio recording. Its `SpeakerWindow.buffer` is exactly the shape `embed()` expects. Together they enable live speaker-labeled transcription entirely on-device.
+- [react-native-nitro-audio-anvil](https://github.com/Gautham495/react-native-nitro-audio-anvil) — corruption-proof audio recording. Its `SpeakerWindow.buffer` feeds directly into `embed()`. Together they enable live speaker-labeled transcription entirely on-device.
 - [react-native-nitro-cloud-uploader](https://github.com/Gautham495/react-native-nitro-cloud-uploader) — for when the recording ends and you want to ship the audio artifact to S3-compatible storage for archival or async processing.
+
+---
+
+## 🙏 Credits
+
+- **Model architecture**: [ECAPA-TDNN](https://arxiv.org/abs/2005.07143) — Desplanques, Thienpondt, Demuynck (Interspeech 2020)
+- **Model weights**: [speechbrain/spkrec-ecapa-voxceleb](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb) — trained on VoxCeleb 1+2, Apache 2.0
+- **ExecuTorch export**: [mlboydaisuke/ECAPA-TDNN-Speaker-ExecuTorch](https://huggingface.co/mlboydaisuke/ECAPA-TDNN-Speaker-ExecuTorch) — mel-spec baked into graph via STFT-as-convolutions, verified 0.9985 cosine vs eager PyTorch. Apache 2.0.
+- **Runtime**: [ExecuTorch](https://pytorch.org/executorch) — PyTorch's official on-device runtime
+
+Special thanks to the model exporter for the meticulous work of getting SpeechBrain's Fbank pipeline into a Core ML / XNNPACK-compatible graph. It saved weeks of debugging.
 
 ---
 
@@ -297,6 +339,10 @@ Contributions are welcome!
 ## 🪪 License
 
 MIT © [**Gautham Vijayan**](https://gauthamvijay.com)
+
+Built for [SHINE](https://shineai.io), released for everyone.
+
+Note that model files (`.pte`) are distributed separately under Apache 2.0 from SpeechBrain and the ExecuTorch conversion.
 
 ---
 
