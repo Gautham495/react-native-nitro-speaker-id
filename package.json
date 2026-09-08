@@ -1,6 +1,6 @@
 {
   "name": "react-native-nitro-speaker-id",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "React Native Nitro Module for on-device speaker identification — ECAPA-TDNN embeddings running natively on the Apple Neural Engine and Android CPU/NPU.",
   "main": "./lib/module/index.js",
   "types": "./lib/typescript/src/index.d.ts",
