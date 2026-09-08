@@ -39,7 +39,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     factory.startReactNative(
-      withModuleName: "NitroAudioAnvilExample",
+      withModuleName: "NitroSpeakerIdExample",
       in: window,
       launchOptions: connectionOptions.userActivities.first.map {
         [

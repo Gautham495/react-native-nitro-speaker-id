@@ -10315,7 +10315,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"react-native-nitro-audio-anvil@npm:^1.0.11":
+"react-native-nitro-audio-anvil@npm:^1.0.13":
   version: 1.0.13
   resolution: "react-native-nitro-audio-anvil@npm:1.0.13"
   peerDependencies:
@@ -10358,8 +10358,9 @@ __metadata:
     react-native-blob-util: "npm:^0.24.10"
     react-native-builder-bob: "npm:^0.43.0"
     react-native-monorepo-config: "npm:^0.4.0"
-    react-native-nitro-audio-anvil: "npm:^1.0.11"
+    react-native-nitro-audio-anvil: "npm:^1.0.13"
     react-native-nitro-modules: "npm:^0.37.1"
+    react-native-zip-archive: "npm:9.5.1"
     vite: "npm:^7.1.1"
     vite-plugin-commonjs: "npm:^0.10.4"
   languageName: unknown
@@ -10402,6 +10403,16 @@ __metadata:
     react-native-nitro-modules: "*"
   languageName: unknown
   linkType: soft
+
+"react-native-zip-archive@npm:9.5.1":
+  version: 9.5.1
+  resolution: "react-native-zip-archive@npm:9.5.1"
+  peerDependencies:
+    react: ">=18.0.0"
+    react-native: ">=0.70.0"
+  checksum: 10c0/fb8c6bbb45641915ff4298d6f64426d1a26c853e7f992a15b35f9fe28c57bcef0e32c9ab59d1f836e46aad0b06f83e3ed3ec087cc8a4ab8438372c039db65b10
+  languageName: node
+  linkType: hard
 
 "react-native@npm:0.85.3":
   version: 0.85.3

@@ -16,7 +16,7 @@ class NitroSpeakerIdPackage : BaseReactPackage() {
 
     companion object {
         init {
-            System.loadLibrary("nitrospeakerid")
+            System.loadLibrary("NitroSpeakerId")
         }
     }
 }

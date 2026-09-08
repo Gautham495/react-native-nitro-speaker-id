@@ -14,8 +14,9 @@
     "react-dom": "19.2.3",
     "react-native": "0.85.3",
     "react-native-blob-util": "^0.24.10",
-    "react-native-nitro-audio-anvil": "^1.0.11",
-    "react-native-nitro-modules": "^0.37.1"
+    "react-native-nitro-audio-anvil": "^1.0.13",
+    "react-native-nitro-modules": "^0.37.1",
+    "react-native-zip-archive": "9.5.1"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

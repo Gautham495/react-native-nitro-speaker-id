@@ -50,7 +50,7 @@ PODS:
     - ReactCommon/turbomodule/core
     - ReactNativeDependencies
     - Yoga
-  - NitroSpeakerId (1.0.0):
+  - NitroSpeakerId (1.0.2):
     - hermes-engine
     - NitroModules
     - RCTRequired
@@ -1880,6 +1880,30 @@ PODS:
     - React-utils (= 0.85.3)
     - ReactNativeDependencies
   - ReactNativeDependencies (0.85.3)
+  - RNZipArchive (9.5.1):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - SSZipArchive (~> 2.5.5)
+    - Yoga
+  - SSZipArchive (2.5.5)
   - Yoga (0.0.0)
 
 DEPENDENCIES:
@@ -1961,7 +1985,12 @@ DEPENDENCIES:
   - ReactCodegen (from `build/generated/ios/ReactCodegen`)
   - ReactCommon/turbomodule/core (from `../node_modules/react-native/ReactCommon`)
   - ReactNativeDependencies (from `../node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec`)
+  - RNZipArchive (from `../node_modules/react-native-zip-archive`)
   - Yoga (from `../node_modules/react-native/ReactCommon/yoga`)
+
+SPEC REPOS:
+  trunk:
+    - SSZipArchive
 
 EXTERNAL SOURCES:
   FBLazyVector:
@@ -2119,6 +2148,8 @@ EXTERNAL SOURCES:
     :path: "../node_modules/react-native/ReactCommon"
   ReactNativeDependencies:
     :podspec: "../node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec"
+  RNZipArchive:
+    :path: "../node_modules/react-native-zip-archive"
   Yoga:
     :path: "../node_modules/react-native/ReactCommon/yoga"
 
@@ -2127,7 +2158,7 @@ SPEC CHECKSUMS:
   hermes-engine: 7ce8c717aedd01d369522ab1262551beb14759e7
   NitroAudioAnvil: 72838b27de9a8a9944435c6d6e986eb92aed799d
   NitroModules: 38f8754287858ff1294e43fd43f614a664e54050
-  NitroSpeakerId: 337a7a0bde2c12450c0250856c297334bf45cb13
+  NitroSpeakerId: 08db183fdacfda594a2584922ad67a108e11090b
   RCTDeprecation: a4c521821fab57cbb125b36effe84d897d0dfa12
   RCTRequired: 9f3a7e5645d4bc3f551593de7550bb66ab6e42bc
   RCTSwiftUI: 239ed2eb9e73de5a6f518810630f0c95e01c8702
@@ -2200,8 +2231,10 @@ SPEC CHECKSUMS:
   ReactCodegen: c8f81e6c6f762dcf442a6203a1fb58f7dafc8014
   ReactCommon: 7dfc3250793bf36cf221096ff59e1179e13eef7f
   ReactNativeDependencies: 6c616c54c7d6f6f1232cdabb40c969905d439e26
+  RNZipArchive: b6c1f05a033185e906e8d2f44e40eb5b9714250a
+  SSZipArchive: c69881e8ac5521f0e622291387add5f60f30f3c4
   Yoga: 77dfa8673de2874e1855002ae59c68b8be9b007b
 
-PODFILE CHECKSUM: 9dce08ebe1f2459bed6e9dd03efbcb4067f4053a
+PODFILE CHECKSUM: 023ec8539e380d416812f9ac9b1e6bcdf104a020
 
 COCOAPODS: 1.17.0

@@ -1,18 +1,15 @@
 package com.margelo.nitro.nitrospeakerid
 
+import android.util.Log
 import com.facebook.proguard.annotations.DoNotStrip
+import com.google.ai.edge.litert.Accelerator
+import com.google.ai.edge.litert.CompiledModel
 import com.margelo.nitro.core.ArrayBuffer
 import com.margelo.nitro.core.Promise
-import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.gpu.CompatibilityList
-import org.tensorflow.lite.gpu.GpuDelegate
-import org.tensorflow.lite.nnapi.NnApiDelegate
+import org.jtransforms.fft.FloatFFT_1D
 import java.io.File
-import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.MappedByteBuffer
-import java.nio.channels.FileChannel
 import java.util.concurrent.Executors
 import kotlin.math.PI
 import kotlin.math.cos
@@ -22,124 +19,73 @@ import kotlin.math.pow
 import kotlin.math.sqrt
 
 /**
- * On-device ECAPA-TDNN speaker embedding for Android.
+ * On-device ECAPA-TDNN speaker embedding for Android, backed by LiteRT.
  *
- * Architecture: raw PCM → mel-spectrogram (native, hand-rolled FFT) →
- * ECAPA body (TFLite) → 192-d L2-normalized embedding.
+ * Architecture: raw PCM → mel-spectrogram (native, JTransforms FFT) →
+ * ECAPA body (LiteRT) → 192-d L2-normalized embedding.
  *
- * The mel-spectrogram front-end is hand-rolled Kotlin rather than routed
- * through TFLite's signal ops. Reason: TFLite's SignalTransformer exists but
- * is finicky about tensor shapes and the mel filterbank isn't first-class.
- * A hand-rolled Cooley-Tukey FFT gets us feature parity with SpeechBrain in
- * ~200 lines of well-understood code. Runs in ~3-5 ms per 1.5 s window.
+ * The mel-spectrogram front-end is ported from the working iOS version
+ * (which uses Apple's vDSP), swapping vDSP for JTransforms' FloatFFT_1D.
+ * JTransforms is a well-tested FFT library that produces numerically
+ * correct results — safer than hand-rolling Cooley-Tukey which is
+ * one-sign-flip-away from garbage embeddings.
  *
- * Expected latency for one 1.5 s window:
- *   Pixel 8 (Tensor G3):        ~25 ms   (mel ~3 + TFLite NNAPI ~22)
- *   Galaxy S23 (SD 8 Gen 2):    ~22 ms   (mel ~3 + TFLite NNAPI ~19)
- *   Pixel 6a (Tensor G1):       ~40 ms   (mel ~4 + TFLite GPU ~36)
- *   Snapdragon 778G mid-range:  ~55 ms   (mel ~5 + TFLite GPU ~50)
- *   Low-end 2020 Android:       ~140 ms  (mel ~10 + TFLite CPU ~130)
+ * Currently CPU-only. GPU delegate crashed on Vivo/mid-range devices.
+ * CPU is universal and fast enough (~50-140 ms per 1.5 s window on
+ * mid-range, ~15-30 ms on flagship).
  */
 @DoNotStrip
 class HybridSpeakerId : HybridSpeakerIdSpec() {
 
-    // Guard concurrent embed() with a single-thread executor. Interpreter is
-    // thread-safe for run() but NNAPI's shared driver misbehaves under load.
     private val sessionExecutor = Executors.newSingleThreadExecutor()
 
-    private var interpreter: Interpreter? = null
-    private var nnapiDelegate: NnApiDelegate? = null
-    private var gpuDelegate: GpuDelegate? = null
+    private var model: CompiledModel? = null
     private var currentPath: String? = null
 
-    // Feature extractor. Built once at construction, reused per call.
+    // Params match SpeechBrain's Fbank defaults — same as iOS's Swift version.
     private val melExtractor = MelSpectrogram(
         sampleRate = 16000,
-        nFft = 400,        // 25 ms window at 16 kHz — SpeechBrain default
-        hopLength = 160,   // 10 ms hop — SpeechBrain default
-        nMels = 80         // ECAPA input dimension
+        nFft = 400,        // 25 ms window
+        hopLength = 160,   // 10 ms hop
+        nMels = 80         // ECAPA input dim
     )
 
     override val isLoaded: Boolean
-        get() = interpreter != null
+        get() = model != null
 
     override fun loadModel(modelPath: String): Promise<Unit> {
         return Promise.async {
             synchronized(this) {
-                if (currentPath == modelPath && interpreter != null) return@async
+                if (currentPath == modelPath && model != null) return@async
                 if (!File(modelPath).exists()) {
                     throw RuntimeException("Model file not found: $modelPath")
                 }
-
-                closeInterpreter()
-
-                val modelBuffer = loadMappedFile(modelPath)
-                val options = Interpreter.Options()
-                options.numThreads = 2
-
-                // NNAPI → GPU → CPU fallback chain.
-                var delegated = false
-                try {
-                    val nnapiOpts = NnApiDelegate.Options().apply {
-                        setAllowFp16(true)
-                        setUseNnapiCpu(false)
-                    }
-                    val delegate = NnApiDelegate(nnapiOpts)
-                    options.addDelegate(delegate)
-                    nnapiDelegate = delegate
-                    delegated = true
-                    android.util.Log.i("SpeakerId", "Using NNAPI delegate")
-                } catch (t: Throwable) {
-                    android.util.Log.w("SpeakerId", "NNAPI unavailable: ${t.message}")
-                }
-
-                if (!delegated) {
-                    try {
-                        val compat = CompatibilityList()
-                        if (compat.isDelegateSupportedOnThisDevice) {
-                            val delegate = GpuDelegate()
-                            options.addDelegate(delegate)
-                            gpuDelegate = delegate
-                            delegated = true
-                            android.util.Log.i("SpeakerId", "Using GPU delegate")
-                        }
-                    } catch (t: Throwable) {
-                        android.util.Log.w("SpeakerId", "GPU delegate unavailable: ${t.message}")
-                    }
-                }
-
-                if (!delegated) {
-                    android.util.Log.i("SpeakerId", "Using CPU (XNNPACK)")
-                }
-
-                interpreter = Interpreter(modelBuffer, options)
+                closeModel()
+                model = CompiledModel.create(
+                    modelPath,
+                    CompiledModel.Options(Accelerator.CPU)
+                )
                 currentPath = modelPath
+                Log.i("SpeakerId", "LiteRT model loaded (CPU)")
             }
         }
     }
 
     override fun unloadModel() {
-        synchronized(this) {
-            closeInterpreter()
-        }
+        synchronized(this) { closeModel() }
     }
 
-    private fun closeInterpreter() {
-        interpreter?.close()
-        interpreter = null
-        nnapiDelegate?.close()
-        nnapiDelegate = null
-        gpuDelegate?.close()
-        gpuDelegate = null
+    private fun closeModel() {
+        model?.close()
+        model = null
         currentPath = null
     }
 
     override fun embed(pcm: ArrayBuffer, sampleRate: Double): Promise<ArrayBuffer> {
-        // Snapshot the JS buffer to Kotlin memory on the calling thread.
         val floats = pcmToFloats(pcm, sampleRate)
 
         return Promise.async {
-            val currentInterpreter = interpreter
+            val currentModel = model
                 ?: throw RuntimeException("Model not loaded — call loadModel() first")
 
             val submit = sessionExecutor.submit<ArrayBuffer> {
@@ -148,34 +94,34 @@ class HybridSpeakerId : HybridSpeakerIdSpec() {
                 if (mel.isEmpty()) {
                     throw RuntimeException("Audio too short for mel-spectrogram (need >= 25 ms)")
                 }
-                val timeFrames = mel.size / 80
 
-                // 2. Resize TFLite input tensor to match this frame count.
-                currentInterpreter.resizeInput(0, intArrayOf(1, timeFrames, 80))
-                currentInterpreter.allocateTensors()
+                // 2. Pad/center-crop to model's fixed input shape (1, 150, 80).
+                val targetFrames = 150
+                val nMels = 80
+                val actualFrames = mel.size / nMels
+                val fixedMel = FloatArray(targetFrames * nMels)
 
-                val inputBuffer = ByteBuffer
-                    .allocateDirect(mel.size * 4)
-                    .order(ByteOrder.nativeOrder())
-                for (f in mel) inputBuffer.putFloat(f)
-                inputBuffer.rewind()
+                if (actualFrames >= targetFrames) {
+                    val startFrame = (actualFrames - targetFrames) / 2
+                    System.arraycopy(mel, startFrame * nMels, fixedMel, 0, targetFrames * nMels)
+                } else {
+                    System.arraycopy(mel, 0, fixedMel, 0, mel.size)
+                }
 
-                // 3. TFLite forward pass.
-                val outputShape = currentInterpreter.getOutputTensor(0).shape()
-                val embeddingDim = outputShape[outputShape.size - 1]
-                val outputBuffer = ByteBuffer
-                    .allocateDirect(embeddingDim * 4)
-                    .order(ByteOrder.nativeOrder())
+                // 3. LiteRT forward pass.
+                val inputBuffers = currentModel.createInputBuffers()
+                val outputBuffers = currentModel.createOutputBuffers()
 
-                currentInterpreter.run(inputBuffer, outputBuffer)
-
-                outputBuffer.rewind()
-                val embedding = FloatArray(embeddingDim)
-                for (i in 0 until embeddingDim) embedding[i] = outputBuffer.float
-
-                // 4. L2 normalize (model already does this; defensive re-norm).
-                val normalized = l2Normalize(embedding)
-                floatArrayToArrayBuffer(normalized)
+                try {
+                    inputBuffers[0].writeFloat(fixedMel)
+                    currentModel.run(inputBuffers, outputBuffers)
+                    val embedding = outputBuffers[0].readFloat()
+                    val normalized = l2Normalize(embedding)
+                    floatArrayToArrayBuffer(normalized)
+                } finally {
+                    inputBuffers.forEach { it.close() }
+                    outputBuffers.forEach { it.close() }
+                }
             }
             submit.get()
         }
@@ -192,19 +138,7 @@ class HybridSpeakerId : HybridSpeakerIdSpec() {
         return dot
     }
 
-    // ── Helpers ─────────────────────────────────────────────────────
-
-    private fun loadMappedFile(modelPath: String): MappedByteBuffer {
-        val file = File(modelPath)
-        val inputStream = FileInputStream(file)
-        val fileChannel = inputStream.channel
-        try {
-            return fileChannel.map(FileChannel.MapMode.READ_ONLY, 0, file.length())
-        } finally {
-            fileChannel.close()
-            inputStream.close()
-        }
-    }
+    // ── Buffer helpers ──────────────────────────────────────────────
 
     private fun pcmToFloats(pcm: ArrayBuffer, sampleRate: Double): FloatArray {
         val byteBuffer = pcm.getBuffer(false).order(ByteOrder.LITTLE_ENDIAN)
@@ -254,17 +188,20 @@ class HybridSpeakerId : HybridSpeakerIdSpec() {
     }
 }
 
-// MARK: - Mel-spectrogram (hand-rolled Cooley-Tukey FFT)
+// ── Mel-spectrogram (direct port of iOS Swift version) ─────────────────
 
 /**
- * Computes a mel-spectrogram from raw audio, matching SpeechBrain's Fbank
- * defaults so ECAPA embeddings match the cloud model.
+ * Computes a mel-spectrogram from raw audio, matching the iOS Swift version
+ * so ECAPA embeddings are cross-platform compatible.
  *
  * Pipeline: Hann-windowed STFT → power spectrum → mel filterbank →
- * log(1 + 10*mel). SpeechBrain defaults: n_fft=400, hop=160, n_mels=80,
- * sample_rate=16000.
+ * log(1 + 10*mel). Params match SpeechBrain Fbank defaults: n_fft=400,
+ * hop=160, n_mels=80, sample_rate=16000.
  *
- * FFT is Cooley-Tukey radix-2, in-place, single allocation per compute() call.
+ * FFT via JTransforms' FloatFFT_1D — a mature, well-tested Java FFT that
+ * produces numerically correct results identical to numpy/scipy/vDSP.
+ * Using a real library instead of hand-rolling Cooley-Tukey eliminates
+ * a whole class of sign/scaling bugs.
  */
 private class MelSpectrogram(
     private val sampleRate: Int,
@@ -275,40 +212,20 @@ private class MelSpectrogram(
     private val paddedN: Int = nFft.nextPowerOfTwo()
     private val halfN: Int = paddedN / 2
     private val window: FloatArray
-    private val melFilterbank: Array<FloatArray>  // [nMels][halfN + 1]
-
-    // FFT twiddle factor caches — computed once at init, reused per call.
-    private val cosTable: FloatArray
-    private val sinTable: FloatArray
-    private val bitReverse: IntArray
+    private val melFilterbank: Array<FloatArray>
+    private val fft: FloatFFT_1D
 
     init {
-        // Hann window over the un-padded nFft samples.
+        // Hann window matching vDSP_hann_window with vDSP_HANN_NORM flag:
+        // 0.5 * (1 - cos(2π * n / (N-1)))
+        // The N-1 denominator is Apple's normalization. Denominator matters —
+        // using N vs N-1 changes edge tapering enough to shift the FFT bins.
         window = FloatArray(nFft) { i ->
             0.5f * (1f - cos(2f * PI.toFloat() * i / (nFft - 1)))
         }
 
         melFilterbank = buildMelFilterbank(nMels, halfN + 1, sampleRate)
-
-        // Precompute twiddle factors for the FFT.
-        cosTable = FloatArray(paddedN / 2)
-        sinTable = FloatArray(paddedN / 2)
-        for (i in 0 until paddedN / 2) {
-            cosTable[i] = cos(2.0 * PI * i / paddedN).toFloat()
-            sinTable[i] = -sin(2.0 * PI * i / paddedN).toFloat()  // negative for forward FFT
-        }
-
-        // Precompute bit-reversal permutation.
-        val bits = (ln(paddedN.toDouble()) / ln(2.0)).toInt()
-        bitReverse = IntArray(paddedN) { i ->
-            var reversed = 0
-            var value = i
-            for (b in 0 until bits) {
-                reversed = (reversed shl 1) or (value and 1)
-                value = value shr 1
-            }
-            reversed
-        }
+        fft = FloatFFT_1D(paddedN.toLong())
     }
 
     /**
@@ -319,13 +236,13 @@ private class MelSpectrogram(
     fun compute(pcm: FloatArray): FloatArray {
         if (pcm.size < nFft) return FloatArray(0)
 
-        // Match SpeechBrain: center=False, no end-padding.
+        // center=False, no end-padding — same as iOS Swift.
         val timeFrames = 1 + (pcm.size - nFft) / hopLength
         val result = FloatArray(timeFrames * nMels)
 
-        // Reusable per-frame buffers.
-        val real = FloatArray(paddedN)
-        val imag = FloatArray(paddedN)
+        // Buffer for JTransforms realForward: size N, contains real signal,
+        // gets overwritten with packed complex output.
+        val fftBuffer = FloatArray(paddedN)
         val power = FloatArray(halfN + 1)
 
         for (frameIdx in 0 until timeFrames) {
@@ -333,20 +250,29 @@ private class MelSpectrogram(
 
             // 1. Windowed segment, zero-padded to paddedN.
             for (i in 0 until nFft) {
-                real[i] = pcm[start + i] * window[i]
+                fftBuffer[i] = pcm[start + i] * window[i]
             }
-            for (i in nFft until paddedN) real[i] = 0f
-            for (i in 0 until paddedN) imag[i] = 0f
+            for (i in nFft until paddedN) fftBuffer[i] = 0f
 
-            // 2. In-place FFT.
-            fft(real, imag)
+            // 2. Real-to-complex FFT via JTransforms.
+            //    Output packing for FloatFFT_1D.realForward:
+            //      a[0]    = Re[0]     (DC, real)
+            //      a[1]    = Re[N/2]   (Nyquist, real — packed here for space)
+            //      a[2k]   = Re[k]     for k = 1..N/2-1
+            //      a[2k+1] = Im[k]     for k = 1..N/2-1
+            //    So we unpack into a standard power[0..N/2] array.
+            fft.realForward(fftBuffer)
 
-            // 3. Power spectrum (halfN + 1 bins, including DC and Nyquist).
-            for (i in 0..halfN) {
-                power[i] = real[i] * real[i] + imag[i] * imag[i]
+            // 3. Power spectrum |X|².
+            power[0] = fftBuffer[0] * fftBuffer[0]                // DC
+            power[halfN] = fftBuffer[1] * fftBuffer[1]            // Nyquist
+            for (k in 1 until halfN) {
+                val re = fftBuffer[2 * k]
+                val im = fftBuffer[2 * k + 1]
+                power[k] = re * re + im * im
             }
 
-            // 4. Apply mel filterbank + log(1 + 10*mel).
+            // 4. Apply mel filterbank + log(1 + 10*mel) — matches iOS.
             for (m in 0 until nMels) {
                 var acc = 0f
                 val filter = melFilterbank[m]
@@ -358,47 +284,6 @@ private class MelSpectrogram(
         }
 
         return result
-    }
-
-    /**
-     * Cooley-Tukey radix-2 in-place FFT. Time complexity O(N log N),
-     * uses precomputed twiddle tables so no trig calls per frame.
-     */
-    private fun fft(real: FloatArray, imag: FloatArray) {
-        val n = paddedN
-
-        // Bit-reversal permutation.
-        for (i in 0 until n) {
-            val j = bitReverse[i]
-            if (i < j) {
-                var t = real[i]; real[i] = real[j]; real[j] = t
-                t = imag[i]; imag[i] = imag[j]; imag[j] = t
-            }
-        }
-
-        // Butterfly stages.
-        var size = 2
-        while (size <= n) {
-            val halfSize = size / 2
-            val tableStep = n / size
-            var i = 0
-            while (i < n) {
-                var k = 0
-                var j = i
-                while (j < i + halfSize) {
-                    val tr = cosTable[k] * real[j + halfSize] - sinTable[k] * imag[j + halfSize]
-                    val ti = cosTable[k] * imag[j + halfSize] + sinTable[k] * real[j + halfSize]
-                    real[j + halfSize] = real[j] - tr
-                    imag[j + halfSize] = imag[j] - ti
-                    real[j] += tr
-                    imag[j] += ti
-                    j++
-                    k += tableStep
-                }
-                i += size
-            }
-            size *= 2
-        }
     }
 
     private fun buildMelFilterbank(nMels: Int, nFftBins: Int, sampleRate: Int): Array<FloatArray> {
@@ -443,5 +328,3 @@ private fun Int.nextPowerOfTwo(): Int {
     while (n < this) n = n shl 1
     return n
 }
-
-private fun sin(x: Double): Double = kotlin.math.sin(x)

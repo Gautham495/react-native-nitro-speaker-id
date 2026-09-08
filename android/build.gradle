@@ -1,29 +1,28 @@
 buildscript {
-  ext.NitroSpeakerId = [
-    kotlinVersion: "2.0.21",
-    minSdkVersion: 24,
-    compileSdkVersion: 36,
-    targetSdkVersion: 36
-  ]
-
-  ext.getExtOrDefault = { prop ->
-    if (rootProject.ext.has(prop)) {
-      return rootProject.ext.get(prop)
+  // Only needed when this library is built standalone; a React Native app already provides AGP + KGP.
+  if (project == rootProject) {
+    repositories {
+      google()
+      mavenCentral()
+      maven { url 'https://jitpack.io' }
     }
-
-    return NitroSpeakerId[prop]
+    dependencies {
+      classpath "com.android.tools.build:gradle:8.7.2"
+      classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:2.0.21"
+    }
   }
+}
 
-  repositories {
-    google()
-    mavenCentral()
-  }
+apply plugin: "com.android.library"
+apply plugin: "org.jetbrains.kotlin.android"
+apply from: '../nitrogen/generated/android/NitroSpeakerId+autolinking.gradle'
 
-  dependencies {
-    classpath "com.android.tools.build:gradle:8.7.2"
-    // noinspection DifferentKotlinGradleVersion
-    classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:${getExtOrDefault('kotlinVersion')}"
-  }
+def getExtOrDefault(name) {
+  return rootProject.ext.has(name) ? rootProject.ext.get(name) : project.properties["NitroSpeakerId_" + name]
+}
+
+def getExtOrIntegerDefault(name) {
+  return rootProject.ext.has(name) ? rootProject.ext.get(name) : (project.properties["NitroSpeakerId_" + name]).toInteger()
 }
 
 def reactNativeArchitectures() {
@@ -31,35 +30,21 @@ def reactNativeArchitectures() {
   return value ? value.split(",") : ["armeabi-v7a", "x86", "x86_64", "arm64-v8a"]
 }
 
-apply plugin: "com.android.library"
-apply plugin: "kotlin-android"
-apply from: '../nitrogen/generated/android/NitroSpeakerId+autolinking.gradle'
-
-apply plugin: "com.facebook.react"
-
 android {
   namespace "com.margelo.nitro.nitrospeakerid"
 
-  compileSdkVersion getExtOrDefault("compileSdkVersion")
+  compileSdkVersion getExtOrIntegerDefault("compileSdkVersion")
+  ndkVersion getExtOrDefault("ndkVersion")
 
   defaultConfig {
-    minSdkVersion getExtOrDefault("minSdkVersion")
-    targetSdkVersion getExtOrDefault("targetSdkVersion")
+    minSdkVersion getExtOrIntegerDefault("minSdkVersion")
+    targetSdkVersion getExtOrIntegerDefault("targetSdkVersion")
 
     externalNativeBuild {
       cmake {
         cppFlags "-frtti -fexceptions -Wall -fstack-protector-all"
-        arguments "-DANDROID_STL=c++_shared", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON"
+        arguments "-DANDROID_STL=c++_shared"
         abiFilters (*reactNativeArchitectures())
-
-        buildTypes {
-          debug {
-            cppFlags "-O1 -g"
-          }
-          release {
-            cppFlags "-O2"
-          }
-        }
       }
     }
   }
@@ -70,16 +55,15 @@ android {
     }
   }
 
-  packaging {
-    resources {
-      excludes += [
-        "META-INF",
-        "META-INF/**"
-      ]
-    }
+  buildFeatures {
+    buildConfig true
+    prefab true
+  }
 
-    jniLibs {
-      excludes += [
+  packagingOptions {
+    excludes = [
+        "META-INF",
+        "META-INF/**",
         "**/libc++_shared.so",
         "**/libfbjni.so",
         "**/libjsi.so",
@@ -94,39 +78,50 @@ android {
         "**/libturbomodulejsijni.so",
         "**/libreact_nativemodule_core.so",
         "**/libjscexecutor.so"
-      ]
+    ]
+  }
+
+  buildTypes {
+    release {
+      minifyEnabled false
     }
   }
 
   buildFeatures {
     prefab true
   }
-
+ 
   compileOptions {
-    sourceCompatibility JavaVersion.VERSION_17
-    targetCompatibility JavaVersion.VERSION_17
+    sourceCompatibility JavaVersion.VERSION_1_8
+    targetCompatibility JavaVersion.VERSION_1_8
   }
-
+ 
   // TFLite .tflite files ship as raw model data. Don't compress them in the
   // AAR — TFLite mmaps them at load time and compressed models can't be
   // mmapped. Consuming app is free to compress at APK level if needed.
   aaptOptions {
     noCompress += ["tflite"]
   }
+
+  kotlinOptions {
+    jvmTarget = "17"
+  }
+}
+
+repositories {
+  mavenCentral()
+  google()
+  maven { url 'https://jitpack.io' }
 }
 
 dependencies {
   implementation "com.facebook.react:react-android"
+
+  implementation "org.jetbrains.kotlin:kotlin-stdlib:2.0.21"
+
   implementation project(":react-native-nitro-modules")
 
-  // TensorFlow Lite runtime + NNAPI delegate + GPU delegate.
-  // Version 2.16.1 is 16 KB page-aligned per Google's own release notes
-  // (they enforced this in 2.14+; 2.16.1 is stable and current). Total AAR
-  // footprint ~4 MB per ABI vs ONNX Runtime's ~14 MB. Faster, smaller,
-  // Google-maintained, no page-size fights.
-  implementation "org.tensorflow:tensorflow-lite:2.16.1"
-  implementation "org.tensorflow:tensorflow-lite-gpu:2.16.1"
-  implementation "org.tensorflow:tensorflow-lite-gpu-delegate-plugin:0.4.4"
-  // NNAPI delegate is bundled in the main tensorflow-lite artifact — no
-  // separate dependency needed for it.
+  implementation "com.google.ai.edge.litert:litert:2.1.0"
+
+  implementation 'com.github.wendykierp:JTransforms:3.1'
 }
