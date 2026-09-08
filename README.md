@@ -12,7 +12,7 @@
 
 > [!NOTE]
 >
-> - This library was built for my production app SHINE, an AI meeting intelligence platform, where we needed to label who was speaking during live sales calls — without shipping audio to the cloud, without per-turn latency, and without vendor lock-in.
+> - This library was built for my production app, an AI meeting intelligence platform, where we needed to label who was speaking during live sales calls — without shipping audio to the cloud, without per-turn latency, and without vendor lock-in.
 > - It runs [SpeechBrain's ECAPA-TDNN](https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb) speaker embedding model on-device via each platform's **native ML runtime**:
 >   - **iOS** — Core ML → Neural Engine (A12+)
 >   - **Android** — LiteRT (Google AI Edge) → CPU
@@ -297,8 +297,6 @@ Contributions are welcome!
 ## 🪪 License
 
 MIT © [**Gautham Vijayan**](https://gauthamvijay.com)
-
-Built for [SHINE](https://shineai.io), released for everyone.
 
 ---
 
